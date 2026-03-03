@@ -1,0 +1,945 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Basketball Free-Throw Analysis Dashboard</title>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        :root {
+            --bg: #0f1117; --surface: #1a1d27; --surface2: #252836; --border: #2e3348;
+            --text: #e4e6f0; --text-dim: #8b8fa3; --accent: #f97316;
+            --accent-glow: rgba(249,115,22,0.15); --goal: #22c55e; --miss: #ef4444;
+            --expert: #06b6d4;
+        }
+        body { font-family: 'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; min-height: 100vh; }
+        .header { background: linear-gradient(135deg,#1a1d27,#252836); border-bottom: 1px solid var(--border); padding: 24px 40px; }
+        .header h1 { font-size: 24px; font-weight: 700; background: linear-gradient(135deg,#f97316,#fb923c); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .header .subtitle { color: var(--text-dim); font-size: 14px; }
+        .main { padding: 32px 40px; max-width: 1600px; margin: 0 auto; }
+        #plotlyStatus { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 20px; margin-bottom: 16px; font-size: 13px; color: var(--text-dim); }
+        #plotlyStatus.loaded { display: none; }
+        #plotlyStatus.error { border-color: var(--miss); color: var(--miss); }
+        .upload-zone { border: 2px dashed var(--border); border-radius: 16px; padding: 48px; text-align: center; transition: all 0.2s; cursor: pointer; background: var(--surface); margin-bottom: 32px; }
+        .upload-zone:hover,.upload-zone.dragover { border-color: var(--accent); background: var(--accent-glow); }
+        .upload-zone h2 { font-size: 18px; margin-bottom: 8px; }
+        .upload-zone p { color: var(--text-dim); font-size: 14px; }
+        .upload-zone input { display: none; }
+        .file-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
+        .chip { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 16px; font-size: 13px; cursor: pointer; transition: all 0.15s; display: flex; align-items: center; gap: 8px; }
+        .chip:hover { border-color: var(--accent); }
+        .chip.active { border-color: var(--accent); background: var(--accent-glow); }
+        .chip .dot { width: 8px; height: 8px; border-radius: 50%; }
+        .chip .dot.goal { background: var(--goal); }
+        .chip .dot.miss { background: var(--miss); }
+        .chip .remove { color: var(--text-dim); cursor: pointer; font-size: 16px; margin-left: 4px; }
+        .chip .remove:hover { color: var(--miss); }
+        .stats-bar { display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 16px; margin-bottom: 32px; }
+        .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+        .stat-card .label { font-size: 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
+        .stat-card .value { font-size: 28px; font-weight: 700; margin-top: 4px; }
+        .stat-card .value.goal { color: var(--goal); }
+        .stat-card .value.miss { color: var(--miss); }
+        .stat-card .value.accent { color: var(--accent); }
+        .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 32px; }
+        .chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; overflow: hidden; }
+        .chart-card.full-width { grid-column: 1 / -1; }
+        .chart-card h3 { font-size: 15px; margin-bottom: 16px; color: var(--text-dim); }
+        .data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .data-table th { text-align: left; padding: 10px 12px; color: var(--text-dim); font-weight: 600; border-bottom: 1px solid var(--border); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+        .data-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+        .data-table tr:hover td { background: var(--surface2); cursor: pointer; }
+        .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+        .badge.goal { background: rgba(34,197,94,0.15); color: var(--goal); }
+        .badge.miss { background: rgba(239,68,68,0.15); color: var(--miss); }
+        .hidden { display: none; }
+        /* ── Eye Tracking Section ── */
+        .gaze-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 24px; }
+        .metric-list { list-style: none; padding: 0; }
+        .metric-list li { padding: 10px 0; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+        .metric-list li:last-child { border-bottom: none; }
+        .metric-label { font-size: 13px; color: var(--text-dim); }
+        .metric-value { font-size: 15px; font-weight: 600; }
+        .metric-value.good { color: var(--goal); }
+        .metric-value.ok { color: var(--accent); }
+        .metric-value.poor { color: var(--miss); }
+        .score-ring { width: 90px; height: 90px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 28px; font-weight: 700; margin: 0 auto 12px; }
+        .legend-row { display: flex; gap: 16px; margin-top: 12px; font-size: 12px; color: var(--text-dim); justify-content: center; }
+        .legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+        .no-gaze-msg { color: var(--text-dim); font-size: 14px; text-align: center; padding: 60px 20px; }
+        /* ── AI Coach Section ── */
+        .coach-section { margin-bottom: 32px; }
+        .coach-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; }
+        .coach-card h3 { font-size: 15px; margin-bottom: 16px; color: var(--text-dim); display: flex; align-items: center; gap: 8px; }
+        .coach-toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; align-items: center; }
+        .coach-btn { background: linear-gradient(135deg,#f97316,#fb923c); color: #fff; border: none; border-radius: 8px; padding: 10px 20px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s; display: flex; align-items: center; gap: 6px; }
+        .coach-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(249,115,22,0.3); }
+        .coach-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+        .coach-btn.secondary { background: var(--surface2); border: 1px solid var(--border); color: var(--text); }
+        .coach-btn.secondary:hover { border-color: var(--accent); }
+        .api-config { display: flex; gap: 8px; align-items: center; margin-left: auto; }
+        .api-config input { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; color: var(--text); font-size: 12px; width: 260px; font-family: monospace; }
+        .api-config input:focus { outline: none; border-color: var(--accent); }
+        .api-config select { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; color: var(--text); font-size: 12px; cursor: pointer; }
+        .coach-response { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 20px 24px; min-height: 60px; font-size: 14px; line-height: 1.8; white-space: pre-wrap; word-wrap: break-word; }
+        .coach-response h4 { color: var(--accent); margin: 16px 0 8px; font-size: 15px; }
+        .coach-response strong { color: var(--accent); }
+        .coach-response em { color: var(--expert); }
+        .coach-response ul, .coach-response ol { margin: 8px 0 8px 20px; }
+        .coach-response li { margin-bottom: 4px; }
+        .coach-response code { background: var(--surface2); padding: 1px 6px; border-radius: 4px; font-size: 13px; }
+        .coach-placeholder { color: var(--text-dim); font-style: italic; text-align: center; padding: 20px; }
+        .coach-thinking { display: inline-flex; align-items: center; gap: 8px; color: var(--accent); font-size: 14px; }
+        .coach-thinking .dots { display: inline-flex; gap: 3px; }
+        .coach-thinking .dots span { width: 6px; height: 6px; background: var(--accent); border-radius: 50%; animation: coachPulse 1.4s infinite; }
+        .coach-thinking .dots span:nth-child(2) { animation-delay: 0.2s; }
+        .coach-thinking .dots span:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes coachPulse { 0%,80%,100% { opacity: 0.3; transform: scale(0.8); } 40% { opacity: 1; transform: scale(1.2); } }
+    </style>
+</head>
+<body>
+<div class="header">
+    <div>
+        <h1>🏀 Basketball Free-Throw Analysis</h1>
+        <div class="subtitle">Upload CSV files from Unity to compare actual vs ideal trajectories</div>
+    </div>
+</div>
+<div class="main">
+    <div id="plotlyStatus">⏳ Loading Plotly.js charting library...</div>
+    <div class="upload-zone" id="uploadZone">
+        <h2>Drop CSV files here or click to browse</h2>
+        <p>Select Ball_*.csv and Ball_*_EyeFeatures_*.csv files exported from Unity</p>
+        <input type="file" id="fileInput" accept=".csv" multiple>
+    </div>
+    <div class="file-chips" id="fileChips"></div>
+    <div class="stats-bar hidden" id="statsBar">
+        <div class="stat-card"><div class="label">Total Throws</div><div class="value accent" id="statTotal">0</div></div>
+        <div class="stat-card"><div class="label">Goals</div><div class="value goal" id="statGoals">0</div></div>
+        <div class="stat-card"><div class="label">Misses</div><div class="value miss" id="statMisses">0</div></div>
+        <div class="stat-card"><div class="label">Accuracy</div><div class="value accent" id="statAccuracy">0%</div></div>
+        <div class="stat-card"><div class="label">Avg Release Speed</div><div class="value accent" id="statSpeed">0 m/s</div></div>
+    </div>
+    <div class="charts-grid hidden" id="chartsArea">
+        <div class="chart-card full-width"><h3 id="plot3DTitle">3D Trajectory: Actual vs Ideal</h3><div id="plot3D" style="height:500px;"></div></div>
+        <div class="chart-card"><h3>Side View — Height vs Horizontal Distance</h3><div id="plotSide" style="height:400px;"></div></div>
+        <div class="chart-card"><h3>Top View — Lateral Deviation</h3><div id="plotTop" style="height:400px;"></div></div>
+        <div class="chart-card"><h3>Ball Speed Over Time</h3><div id="plotSpeed" style="height:400px;"></div></div>
+        <div class="chart-card"><h3>Controller Velocity Profile</h3><div id="plotControllerVel" style="height:400px;"></div></div>
+    </div>
+    <!-- ── Eye Tracking Gaze Analysis Section ── -->
+    <div class="chart-card full-width hidden" id="gazeArea" style="margin-bottom:32px;">
+        <h3 id="gazeTitle">Gaze Analysis: Backboard Heatmap</h3>
+        <div class="gaze-grid">
+            <div id="gazeHeatmap" style="height:500px;"></div>
+            <div>
+                <div id="gazeScoreBox" style="text-align:center;margin-bottom:16px;">
+                    <div class="score-ring" id="gazeScoreRing" style="border:4px solid var(--accent);">--</div>
+                    <div style="font-size:13px;color:var(--text-dim);">Focus Score</div>
+                </div>
+                <ul class="metric-list" id="gazeMetrics">
+                    <li><span class="metric-label">Focus Accuracy</span><span class="metric-value" id="metFocusAcc">--</span></li>
+                    <li><span class="metric-label">Gaze Stability (σ)</span><span class="metric-value" id="metStability">--</span></li>
+                    <li><span class="metric-label">Time in Expert Zone</span><span class="metric-value" id="metTimeInZone">--</span></li>
+                    <li><span class="metric-label">Quiet Eye Duration</span><span class="metric-value" id="metQuietEye">--</span></li>
+                    <li><span class="metric-label">Centroid U, V</span><span class="metric-value" id="metCentroid">--</span></li>
+                    <li><span class="metric-label">Samples</span><span class="metric-value" id="metSamples">--</span></li>
+                </ul>
+                <div class="legend-row">
+                    <span><span class="legend-dot" style="background:#06b6d4;"></span>Expert Zone</span>
+                    <span><span class="legend-dot" style="background:#f97316;"></span>Your Centroid</span>
+                    <span><span class="legend-dot" style="background:#a855f7;"></span>Gaze Density</span>
+                </div>
+            </div>
+        </div>
+        <div class="no-gaze-msg hidden" id="noGazeMsg">No eye-tracking data available for this throw. Upload the matching Ball_N_EyeFeatures_*.csv file.</div>
+    </div>
+
+    <!-- ── AI Coach Section ── -->
+    <div class="coach-section hidden" id="coachSection">
+        <div class="coach-card">
+            <h3>🧠 AI Coach — Expert Free-Throw Analysis</h3>
+            <div class="coach-toolbar">
+                <button class="coach-btn" id="btnAskCoach" onclick="askCoach('single')" disabled>
+                    🎯 Analyze This Throw
+                </button>
+                <button class="coach-btn secondary" id="btnSessionSummary" onclick="askCoach('session')" disabled>
+                    📊 Session Summary
+                </button>
+                <div class="api-config">
+                    <select id="modelSelect" title="Gemini Model">
+                        <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
+                        <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                        <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                    </select>
+                    <input type="password" id="apiKeyInput" placeholder="Paste Gemini API Key" title="Your Google AI Studio API key (stored locally)">
+                    <button class="coach-btn secondary" onclick="saveApiKey()" style="padding:8px 14px;">💾 Save</button>
+                </div>
+            </div>
+            <div class="coach-response" id="coachResponse">
+                <div class="coach-placeholder">Select a throw and click "Analyze This Throw" to get personalized coaching feedback from your AI assistant.</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="chart-card hidden" id="tableArea" style="margin-bottom:32px;">
+        <h3>Throw Summary</h3>
+        <table class="data-table">
+            <thead><tr>
+                <th>Ball</th><th>Result</th><th>Release Speed (m/s)</th><th>Release Height (m)</th>
+                <th>Release Angle (°)</th><th>Ideal Speed (m/s)</th><th>Ideal Angle (°)</th>
+                <th>Speed Error (%)</th><th>Angle Error (°)</th>
+            </tr></thead>
+            <tbody id="summaryBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+// ── Plotly loader with multiple CDN fallbacks ───────────────────────
+let plotlyReady = false;
+(async function loadPlotly() {
+    const status = document.getElementById('plotlyStatus');
+    const sources = [
+        'https://cdn.plot.ly/plotly-2.35.2.min.js',
+        'https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.35.2/plotly.min.js',
+        'https://unpkg.com/plotly.js-dist-min@2.35.2/plotly.min.js'
+    ];
+    for (const src of sources) {
+        try {
+            await new Promise((ok, fail) => {
+                const s = document.createElement('script');
+                s.src = src; s.onload = ok; s.onerror = fail;
+                document.head.appendChild(s);
+            });
+            if (typeof Plotly !== 'undefined') {
+                plotlyReady = true;
+                status.classList.add('loaded');
+                console.log('Plotly loaded from', src);
+                return;
+            }
+        } catch(e) { console.warn('CDN failed:', src); }
+    }
+    status.textContent = '❌ Could not load Plotly.js. Check internet connection and reload.';
+    status.classList.add('error');
+})();
+</script>
+
+<script>
+// =====================================================================
+const throws = [];
+const eyeData = {};   // keyed by ball prefix, e.g. "Ball_1"
+
+// ── File handling ────────────────────────────────────────────────────
+const uploadZone = document.getElementById('uploadZone');
+const fileInput = document.getElementById('fileInput');
+uploadZone.addEventListener('click', () => fileInput.click());
+uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('dragover'); });
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+uploadZone.addEventListener('drop', e => { e.preventDefault(); uploadZone.classList.remove('dragover'); handleFiles(e.dataTransfer.files); });
+fileInput.addEventListener('change', e => handleFiles(e.target.files));
+
+function handleFiles(files) {
+    for (const file of files) {
+        if (!file.name.endsWith('.csv')) continue;
+        const reader = new FileReader();
+        if (file.name.includes('_EyeFeatures_')) {
+            reader.onload = e => { parseEyeCSV(e.target.result, file.name); updateUI(); };
+        } else {
+            reader.onload = e => { const d = parseCSV(e.target.result, file.name); if (d) { throws.push(d); updateUI(); } };
+        }
+        reader.readAsText(file);
+    }
+}
+
+// ── Eye Features CSV Parsing ─────────────────────────────────────────
+function parseEyeCSV(text, filename) {
+    // Extract ball prefix like "Ball_1" from "Ball_1_EyeFeatures_12345.csv"
+    const m = filename.match(/^(Ball_\d+)_EyeFeatures_/);
+    if (!m) return;
+    const key = m[1];
+
+    text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const lines = text.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
+    if (lines.length < 2) return;
+
+    const headers = lines[0].split(',').map(h => h.trim());
+    const rows = [];
+    for (let i = 1; i < lines.length; i++) {
+        const vals = lines[i].split(',').map(v => v.trim());
+        const row = {};
+        headers.forEach((h, j) => { const n = Number(vals[j]); row[h] = isNaN(n) ? vals[j] : n; });
+        rows.push(row);
+    }
+    eyeData[key] = { filename, rows, key };
+}
+
+// ── CSV Parsing ──────────────────────────────────────────────────────
+function parseCSV(text, filename) {
+    text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+
+    const meta = {}; const dataLines = []; let headerLine = null;
+    for (const line of lines) {
+        if (line.startsWith('#')) {
+            const ci = line.indexOf(':');
+            if (ci > 0) meta[line.substring(1, ci).trim()] = line.substring(ci + 1).trim();
+        } else if (!headerLine) headerLine = line;
+        else dataLines.push(line);
+    }
+    if (!headerLine || !dataLines.length) return null;
+
+    const headers = headerLine.split(',').map(h => h.trim());
+    const frames = dataLines.map(line => {
+        const vals = line.split(',').map(v => v.trim());
+        const row = {};
+        headers.forEach((h, i) => { const n = Number(vals[i]); row[h] = isNaN(n) ? vals[i] : n; });
+        return row;
+    });
+
+    const releasePos = parseVec3(meta['Release Position (x,y,z)']);
+
+    // ★ KEY FIX: Use first InFlight frame velocity as TRUE release velocity
+    const firstFlight = frames.find(f => f.Phase === 'InFlight');
+    let releaseVel, releaseSpeed;
+    if (firstFlight) {
+        releaseVel = { x: firstFlight.Ball_Vel_X||0, y: firstFlight.Ball_Vel_Y||0, z: firstFlight.Ball_Vel_Z||0 };
+        releaseSpeed = Math.sqrt(releaseVel.x**2 + releaseVel.y**2 + releaseVel.z**2);
+        releasePos.x = firstFlight.Ball_Pos_X ?? releasePos.x;
+        releasePos.y = firstFlight.Ball_Pos_Y ?? releasePos.y;
+        releasePos.z = firstFlight.Ball_Pos_Z ?? releasePos.z;
+    } else {
+        releaseVel = parseVec3(meta['Release Velocity (x,y,z)']);
+        releaseSpeed = parseFloat(meta['Release Speed (m/s)']) || 0;
+    }
+
+    return { filename, ball: meta['Ball']||filename.replace('.csv',''), result: meta['Result']||'Unknown',
+        releasePos, releaseVel, releaseSpeed,
+        releaseTimestamp: parseFloat(meta['Release Timestamp (s)'])||0, frames, meta };
+}
+
+function parseVec3(s) {
+    if (!s) return {x:0,y:0,z:0};
+    const p = s.split(',').map(v => parseFloat(v.trim()));
+    return {x:p[0]||0, y:p[1]||0, z:p[2]||0};
+}
+
+// ── Ideal Trajectory ─────────────────────────────────────────────────
+const HOOP_HEIGHT = 3.048, G = 9.81;
+
+function computeIdealTrajectory(t) {
+    const rp = t.releasePos, rv = t.releaseVel;
+    if (rv.x===0 && rv.y===0 && rv.z===0) return null;
+
+    const ff = t.frames.filter(f => f.Phase === 'InFlight');
+    if (ff.length < 3) return null;
+
+    let hoopPos;
+    if (t.result === 'Goal') {
+        const last = ff[ff.length-1];
+        hoopPos = { x: last.Ball_Pos_X, y: HOOP_HEIGHT, z: last.Ball_Pos_Z };
+    } else {
+        // Use actual flight direction from first few frames
+        const n = Math.min(5, ff.length);
+        const dx = ff[n-1].Ball_Pos_X - ff[0].Ball_Pos_X;
+        const dz = ff[n-1].Ball_Pos_Z - ff[0].Ball_Pos_Z;
+        const ang = Math.atan2(dz, dx);
+        const dist = 4.572;
+        hoopPos = { x: rp.x + dist*Math.cos(ang), y: HOOP_HEIGHT, z: rp.z + dist*Math.sin(ang) };
+    }
+
+    const hdx = hoopPos.x - rp.x, hdz = hoopPos.z - rp.z;
+    const hDist = Math.sqrt(hdx*hdx + hdz*hdz);
+    const vDist = hoopPos.y - rp.y;
+    if (hDist < 0.5) return null;
+
+    const ENTRY = 48 * Math.PI/180;
+    let bestT=0, bestV=0, bestE=999;
+    for (let deg=30; deg<=75; deg+=0.5) {
+        const th=deg*Math.PI/180, c=Math.cos(th), s=Math.sin(th);
+        const den = hDist*Math.tan(th) - vDist;
+        if (den<=0) continue;
+        const v2 = 0.5*G*hDist*hDist/(c*c*den); if (v2<=0) continue;
+        const v=Math.sqrt(v2), time=hDist/(v*c);
+        const vyH=v*s-G*time, vxH=v*c;
+        const entry=Math.atan2(-vyH, vxH);
+        const err=Math.abs(entry-ENTRY);
+        if (err<bestE) { bestE=err; bestT=th; bestV=v; }
+    }
+    if (!bestV) return null;
+
+    const pts=[], cT=Math.cos(bestT), sT=Math.sin(bestT);
+    const tTotal=hDist/(bestV*cT), dt=tTotal/100;
+    const dX=hdx/hDist, dZ=hdz/hDist;
+    for (let i=0;i<=100;i++) {
+        const ti=i*dt, h=bestV*cT*ti;
+        pts.push({ x:rp.x+h*dX, y:rp.y+bestV*sT*ti-0.5*G*ti*ti, z:rp.z+h*dZ, t:ti });
+    }
+
+    const aH = Math.sqrt(rv.x*rv.x+rv.z*rv.z);
+    const aAng = Math.atan2(rv.y, aH)*180/Math.PI;
+
+    return { idealPoints:pts, idealSpeed:bestV, idealAngle:bestT*180/Math.PI, actualAngle:aAng, hoopPos, horizontalDist:hDist, verticalDist:vDist };
+}
+
+// ── UI ───────────────────────────────────────────────────────────────
+function updateUI() {
+    const ch = document.getElementById('fileChips'); ch.innerHTML='';
+    throws.forEach((t,i) => {
+        const c = document.createElement('div');
+        c.className = `chip ${i===0?'active':''}`;
+        c.innerHTML = `<span class="dot ${t.result==='Goal'?'goal':'miss'}"></span>${t.ball} — ${t.result} (${t.releaseSpeed.toFixed(1)} m/s)<span class="remove">×</span>`;
+        c.addEventListener('click', e => {
+            if (e.target.classList.contains('remove')) { throws.splice(i,1); updateUI(); return; }
+            document.querySelectorAll('.chip').forEach(x=>x.classList.remove('active'));
+            c.classList.add('active'); plotThrow(i);
+        });
+        ch.appendChild(c);
+    });
+
+    if (!throws.length) { ['statsBar','chartsArea','tableArea','gazeArea','coachSection'].forEach(id=>document.getElementById(id).classList.add('hidden')); return; }
+    ['statsBar','chartsArea','tableArea','coachSection'].forEach(id=>document.getElementById(id).classList.remove('hidden'));
+    document.getElementById('btnAskCoach').disabled = !localStorage.getItem('gemini_api_key');
+    document.getElementById('btnSessionSummary').disabled = !localStorage.getItem('gemini_api_key');
+
+    const goals=throws.filter(t=>t.result==='Goal').length, total=throws.length;
+    const avgSpd=throws.reduce((s,t)=>s+t.releaseSpeed,0)/total;
+    document.getElementById('statTotal').textContent=total;
+    document.getElementById('statGoals').textContent=goals;
+    document.getElementById('statMisses').textContent=total-goals;
+    document.getElementById('statAccuracy').textContent=`${(goals/total*100).toFixed(0)}%`;
+    document.getElementById('statSpeed').textContent=`${avgSpd.toFixed(1)} m/s`;
+
+    const tb=document.getElementById('summaryBody'); tb.innerHTML='';
+    throws.forEach((t,i) => {
+        const id=computeIdealTrajectory(t);
+        const aA=id?id.actualAngle:0, iS=id?id.idealSpeed:0, iA=id?id.idealAngle:0;
+        const sE=iS>0?((t.releaseSpeed-iS)/iS*100):0, aE=iA>0?(aA-iA):0;
+        const tr=document.createElement('tr');
+        tr.innerHTML=`<td>${t.ball}</td><td><span class="badge ${t.result==='Goal'?'goal':'miss'}">${t.result}</span></td>
+            <td>${t.releaseSpeed.toFixed(2)}</td><td>${t.releasePos.y.toFixed(2)}</td><td>${aA.toFixed(1)}</td>
+            <td>${iS>0?iS.toFixed(2):'N/A'}</td><td>${iA>0?iA.toFixed(1):'N/A'}</td>
+            <td style="color:${Math.abs(sE)<15?'var(--goal)':'var(--miss)'}">${iS>0?(sE>0?'+':'')+sE.toFixed(1)+'%':'N/A'}</td>
+            <td style="color:${Math.abs(aE)<8?'var(--goal)':'var(--miss)'}">${iA>0?(aE>0?'+':'')+aE.toFixed(1)+'°':'N/A'}</td>`;
+        tr.addEventListener('click',()=>{ document.querySelectorAll('.chip').forEach(x=>x.classList.remove('active')); document.querySelectorAll('.chip')[i]?.classList.add('active'); plotThrow(i); });
+        tb.appendChild(tr);
+    });
+    plotThrow(0);
+}
+
+// ── Plotting ─────────────────────────────────────────────────────────
+const PL = { paper_bgcolor:'#1a1d27', plot_bgcolor:'#1a1d27', font:{color:'#8b8fa3',size:12},
+    margin:{l:60,r:20,t:30,b:50}, xaxis:{gridcolor:'#2e3348',zerolinecolor:'#2e3348'},
+    yaxis:{gridcolor:'#2e3348',zerolinecolor:'#2e3348'}, legend:{font:{color:'#e4e6f0'},bgcolor:'rgba(0,0,0,0)'} };
+
+function plotThrow(idx) {
+    if (!plotlyReady) { setTimeout(()=>plotThrow(idx),500); return; }
+    const t=throws[idx], ideal=computeIdealTrajectory(t);
+    const ff=t.frames.filter(f=>f.Phase==='InFlight'), hf=t.frames.filter(f=>f.Phase==='Held');
+
+    document.getElementById('plot3DTitle').textContent=`3D Trajectory: ${t.ball} — ${t.result} (${t.releaseSpeed.toFixed(1)} m/s)`;
+
+    // 3D
+    const t3=[];
+    if (hf.length) t3.push({x:hf.map(f=>f.Ball_Pos_X),y:hf.map(f=>f.Ball_Pos_Z),z:hf.map(f=>f.Ball_Pos_Y),mode:'lines',type:'scatter3d',name:'Held (in hand)',line:{color:'#a855f7',width:3}});
+    if (ff.length) t3.push({x:ff.map(f=>f.Ball_Pos_X),y:ff.map(f=>f.Ball_Pos_Z),z:ff.map(f=>f.Ball_Pos_Y),mode:'lines+markers',type:'scatter3d',name:'Actual Trajectory',line:{color:'#f97316',width:5},marker:{size:2,color:'#f97316'}});
+    if (ideal) {
+        t3.push({x:ideal.idealPoints.map(p=>p.x),y:ideal.idealPoints.map(p=>p.z),z:ideal.idealPoints.map(p=>p.y),mode:'lines',type:'scatter3d',name:'Ideal Trajectory (Swish)',line:{color:'#3b82f6',width:4,dash:'dash'}});
+        t3.push({x:[ideal.hoopPos.x],y:[ideal.hoopPos.z],z:[ideal.hoopPos.y],mode:'markers',type:'scatter3d',name:'Hoop',marker:{size:8,color:'#22c55e',symbol:'diamond'}});
+    }
+    t3.push({x:[t.releasePos.x],y:[t.releasePos.z],z:[t.releasePos.y],mode:'markers',type:'scatter3d',name:'Release Point',marker:{size:6,color:'#ef4444'}});
+    Plotly.newPlot('plot3D',t3,{...PL,scene:{xaxis:{title:'X (m)',gridcolor:'#2e3348',color:'#8b8fa3'},yaxis:{title:'Z (m)',gridcolor:'#2e3348',color:'#8b8fa3'},zaxis:{title:'Height Y (m)',gridcolor:'#2e3348',color:'#8b8fa3'},bgcolor:'#1a1d27',camera:{eye:{x:1.5,y:1.5,z:0.8}}}},{responsive:true});
+
+    // Side view
+    if (ff.length) {
+        const hd=ff.map(f=>{const dx=f.Ball_Pos_X-t.releasePos.x,dz=f.Ball_Pos_Z-t.releasePos.z;return Math.sqrt(dx*dx+dz*dz);});
+        const st=[{x:hd,y:ff.map(f=>f.Ball_Pos_Y),mode:'lines+markers',name:'Actual',line:{color:'#f97316',width:3},marker:{size:3}}];
+        if (ideal) {
+            const ihd=ideal.idealPoints.map(p=>{const dx=p.x-t.releasePos.x,dz=p.z-t.releasePos.z;return Math.sqrt(dx*dx+dz*dz);});
+            st.push({x:ihd,y:ideal.idealPoints.map(p=>p.y),mode:'lines',name:'Ideal (Swish)',line:{color:'#3b82f6',width:3,dash:'dash'}});
+        }
+        Plotly.newPlot('plotSide',st,{...PL,xaxis:{...PL.xaxis,title:'Horizontal Distance (m)'},yaxis:{...PL.yaxis,title:'Height (m)'}},{responsive:true});
+    }
+
+    // Top view
+    if (ff.length) {
+        const tt=[{x:ff.map(f=>f.Ball_Pos_X),y:ff.map(f=>f.Ball_Pos_Z),mode:'lines+markers',name:'Actual',line:{color:'#f97316',width:3},marker:{size:3}}];
+        if (ideal) tt.push({x:ideal.idealPoints.map(p=>p.x),y:ideal.idealPoints.map(p=>p.z),mode:'lines',name:'Ideal',line:{color:'#3b82f6',width:3,dash:'dash'}});
+        Plotly.newPlot('plotTop',tt,{...PL,xaxis:{...PL.xaxis,title:'X (m)'},yaxis:{...PL.yaxis,title:'Z (m)'}},{responsive:true});
+    }
+
+    // Speed
+    if (ff.length) {
+        const sp=ff.map(f=>Math.sqrt(f.Ball_Vel_X**2+f.Ball_Vel_Y**2+f.Ball_Vel_Z**2));
+        Plotly.newPlot('plotSpeed',[{x:ff.map(f=>f.Timestamp_s),y:sp,mode:'lines',name:'Ball Speed',line:{color:'#f97316',width:2},fill:'tozeroy',fillcolor:'rgba(249,115,22,0.1)'}],
+            {...PL,xaxis:{...PL.xaxis,title:'Time (s)'},yaxis:{...PL.yaxis,title:'Speed (m/s)'}},{responsive:true});
+    }
+
+    // Controller velocity
+    const af=t.frames;
+    if (af.length) {
+        const cs=af.map(f=>Math.sqrt(f.Controller_Vel_X**2+f.Controller_Vel_Y**2+f.Controller_Vel_Z**2));
+        const ts=af.map(f=>f.Timestamp_s), ri=af.findIndex(f=>f.Phase==='InFlight');
+        const ct=[{x:ts,y:cs,mode:'lines',name:'Controller Speed',line:{color:'#a855f7',width:2},fill:'tozeroy',fillcolor:'rgba(168,85,247,0.1)'}];
+        if (ri>=0) ct.push({x:[ts[ri]],y:[cs[ri]],mode:'markers',name:'Release',marker:{size:12,color:'#ef4444',symbol:'star'}});
+        Plotly.newPlot('plotControllerVel',ct,{...PL,xaxis:{...PL.xaxis,title:'Time (s)'},yaxis:{...PL.yaxis,title:'Speed (m/s)'}},{responsive:true});
+    }
+
+    // ── Gaze Heatmap ─────────────────────────────────────────────────
+    plotGazeHeatmap(idx);
+}
+
+// ── Gaze Heatmap + Metrics ───────────────────────────────────────────
+const EXPERT_U = 0.30, EXPERT_V = 0.50, EXPERT_R = 0.07;
+
+function plotGazeHeatmap(idx) {
+    const t = throws[idx];
+    const gazeArea = document.getElementById('gazeArea');
+    const noMsg = document.getElementById('noGazeMsg');
+    const heatEl = document.getElementById('gazeHeatmap');
+    const metricsEls = document.getElementById('gazeMetrics');
+    const scoreBox = document.getElementById('gazeScoreBox');
+
+    // Find matching eye data by ball prefix (e.g. "Ball_1")
+    const ballPrefix = t.ball.replace(/_\d{4,}$/, '');   // strip timestamp suffix
+    const ed = eyeData[ballPrefix];
+
+    if (!ed || !ed.rows.length) {
+        gazeArea.classList.add('hidden');
+        return;
+    }
+
+    gazeArea.classList.remove('hidden');
+    noMsg.classList.add('hidden');
+    heatEl.parentElement.style.display = '';
+    metricsEls.style.display = '';
+    scoreBox.style.display = '';
+
+    const rows = ed.rows;
+    const U = rows.map(r => r.NormalizedU ?? 0);
+    const V = rows.map(r => r.NormalizedV ?? 0);
+
+    // ── Metrics ──────────────────────────────────────────────────────
+    const meanU = U.reduce((a,b)=>a+b,0)/U.length;
+    const meanV = V.reduce((a,b)=>a+b,0)/V.length;
+    const dist = Math.sqrt((meanU-EXPERT_U)**2 + (meanV-EXPERT_V)**2);
+    const focusAcc = Math.max(0, 1 - dist/0.5) * 100;    // 100 at center, 0 at 0.5 away
+
+    const stdU = Math.sqrt(U.reduce((a,u)=>a+(u-meanU)**2,0)/U.length);
+    const stdV = Math.sqrt(V.reduce((a,v)=>a+(v-meanV)**2,0)/V.length);
+    const stability = Math.sqrt(stdU**2 + stdV**2);
+
+    let inZone = 0;
+    U.forEach((u,i) => { if (Math.sqrt((u-EXPERT_U)**2+(V[i]-EXPERT_V)**2) <= EXPERT_R) inZone++; });
+    const zonePercent = (inZone / U.length * 100);
+
+    // Quiet eye: longest consecutive run inside expert zone (approx by radius * 1.5)
+    let maxRun = 0, curRun = 0;
+    const qeRadius = EXPERT_R * 1.5;
+    U.forEach((u,i) => {
+        if (Math.sqrt((u-meanU)**2+(V[i]-meanV)**2) <= qeRadius) { curRun++; if (curRun>maxRun) maxRun=curRun; }
+        else curRun=0;
+    });
+    const sampleRate = 72;
+    const quietEyeSec = maxRun / sampleRate;
+
+    // Composite score: 40% accuracy + 25% stability + 25% zone time + 10% quiet eye
+    const stabScore = Math.max(0, 1 - stability/0.15) * 100;
+    const qeScore = Math.min(quietEyeSec / 1.0, 1) * 100;
+    const focusScore = Math.round(focusAcc * 0.40 + stabScore * 0.25 + zonePercent * 0.25 + qeScore * 0.10);
+
+    // Update metric DOM
+    const fc = focusAcc > 70 ? 'good' : focusAcc > 40 ? 'ok' : 'poor';
+    document.getElementById('metFocusAcc').textContent = focusAcc.toFixed(1) + '%';
+    document.getElementById('metFocusAcc').className = 'metric-value ' + fc;
+
+    const sc = stability < 0.05 ? 'good' : stability < 0.10 ? 'ok' : 'poor';
+    document.getElementById('metStability').textContent = stability.toFixed(4);
+    document.getElementById('metStability').className = 'metric-value ' + sc;
+
+    const zc = zonePercent > 50 ? 'good' : zonePercent > 20 ? 'ok' : 'poor';
+    document.getElementById('metTimeInZone').textContent = zonePercent.toFixed(1) + '%';
+    document.getElementById('metTimeInZone').className = 'metric-value ' + zc;
+
+    const qc = quietEyeSec > 0.6 ? 'good' : quietEyeSec > 0.3 ? 'ok' : 'poor';
+    document.getElementById('metQuietEye').textContent = quietEyeSec.toFixed(2) + 's';
+    document.getElementById('metQuietEye').className = 'metric-value ' + qc;
+
+    document.getElementById('metCentroid').textContent = `(${meanU.toFixed(3)}, ${meanV.toFixed(3)})`;
+    document.getElementById('metSamples').textContent = rows.length;
+
+    // Score ring
+    const ring = document.getElementById('gazeScoreRing');
+    ring.textContent = focusScore;
+    const ringColor = focusScore >= 70 ? 'var(--goal)' : focusScore >= 40 ? 'var(--accent)' : 'var(--miss)';
+    ring.style.borderColor = ringColor; ring.style.color = ringColor;
+
+    document.getElementById('gazeTitle').textContent = `Gaze Analysis: ${t.ball} — Focus Score ${focusScore}/100`;
+
+    // ── Plotly Heatmap ───────────────────────────────────────────────
+    // Expert zone circle points
+    const circPts = 60;
+    const exU = [], exV = [];
+    for (let i = 0; i <= circPts; i++) {
+        const a = (i / circPts) * 2 * Math.PI;
+        exV.push(EXPERT_V + EXPERT_R * Math.cos(a));
+        exU.push(EXPERT_U + EXPERT_R * Math.sin(a));
+    }
+
+    const traces = [
+        // Density contour of actual gaze
+        {
+            x: V, y: U, type: 'histogram2dcontour',
+            colorscale: [[0,'rgba(168,85,247,0)'],[0.3,'rgba(168,85,247,0.3)'],[0.6,'rgba(249,115,22,0.6)'],[1,'rgba(239,68,68,1)']],
+            ncontours: 20, showscale: false, name: 'Gaze Density',
+            contours: { showlines: false }
+        },
+        // Expert zone circle
+        {
+            x: exV, y: exU, mode: 'lines', name: 'Expert Zone',
+            line: { color: '#06b6d4', width: 2.5, dash: 'dash' }
+        },
+        // Actual centroid
+        {
+            x: [meanV], y: [meanU], mode: 'markers+text', name: 'Your Centroid',
+            marker: { size: 14, color: '#f97316', symbol: 'x', line: { width: 2, color: '#fff' } },
+            text: ['You'], textposition: 'top center', textfont: { color: '#f97316', size: 12 }
+        },
+        // Expert center
+        {
+            x: [EXPERT_V], y: [EXPERT_U], mode: 'markers+text', name: 'Expert Center',
+            marker: { size: 10, color: '#06b6d4', symbol: 'diamond' },
+            text: ['Expert'], textposition: 'bottom center', textfont: { color: '#06b6d4', size: 11 }
+        },
+        // Backboard outline (0-1 normalized rect)
+        {
+            x: [0,1,1,0,0], y: [0,0,1,1,0], mode: 'lines', name: 'Backboard',
+            line: { color: '#4b5563', width: 1.5 }, showlegend: false
+        },
+        // Shooter's square (inner rectangle on backboard)
+        {
+            x: [0.28,0.72,0.72,0.28,0.28], y: [0.15,0.15,0.60,0.60,0.15], mode: 'lines', name: "Shooter's Square",
+            line: { color: '#6b7280', width: 1, dash: 'dot' }
+        }
+    ];
+
+    const gazeLayout = {
+        ...PL, margin: { l: 60, r: 20, t: 10, b: 50 },
+        xaxis: { title: 'Horizontal (V: 0=Left, 1=Right)', range: [-0.05,1.05], gridcolor: '#2e3348', zerolinecolor: '#2e3348', scaleanchor: 'y' },
+        yaxis: { title: 'Vertical (U: 0=Bottom, 1=Top)', range: [-0.05,1.05], gridcolor: '#2e3348', zerolinecolor: '#2e3348' },
+        showlegend: true, legend: { font: { color: '#e4e6f0', size: 11 }, bgcolor: 'rgba(0,0,0,0)', x: 1, xanchor: 'right', y: 1 }
+    };
+
+    Plotly.newPlot('gazeHeatmap', traces, gazeLayout, { responsive: true });
+}
+
+// =====================================================================
+// ── AI Coach: Gemini API Integration ─────────────────────────────────
+// =====================================================================
+
+// ── API Key Management ───────────────────────────────────────────────
+(function initApiKey() {
+    const saved = localStorage.getItem('gemini_api_key');
+    if (saved) document.getElementById('apiKeyInput').value = saved;
+    const savedModel = localStorage.getItem('gemini_model');
+    if (savedModel) document.getElementById('modelSelect').value = savedModel;
+})();
+
+function saveApiKey() {
+    const key = document.getElementById('apiKeyInput').value.trim();
+    const model = document.getElementById('modelSelect').value;
+    if (key) {
+        localStorage.setItem('gemini_api_key', key);
+        localStorage.setItem('gemini_model', model);
+        document.getElementById('btnAskCoach').disabled = false;
+        document.getElementById('btnSessionSummary').disabled = false;
+        alert('API key saved locally. It never leaves your browser.');
+    }
+}
+
+document.getElementById('modelSelect').addEventListener('change', function() {
+    localStorage.setItem('gemini_model', this.value);
+});
+
+// ── Build Data Summary for Prompt ────────────────────────────────────
+function buildThrowSummary(idx) {
+    const t = throws[idx];
+    const ideal = computeIdealTrajectory(t);
+    const ff = t.frames.filter(f => f.Phase === 'InFlight');
+    const hf = t.frames.filter(f => f.Phase === 'Held');
+
+    // Basic throw info
+    const aH = Math.sqrt(t.releaseVel.x**2 + t.releaseVel.z**2);
+    const actualAngle = Math.atan2(t.releaseVel.y, aH) * 180 / Math.PI;
+
+    let summary = `## Throw: ${t.ball}\n`;
+    summary += `- Result: ${t.result}\n`;
+    summary += `- Release Speed: ${t.releaseSpeed.toFixed(2)} m/s\n`;
+    summary += `- Release Height: ${t.releasePos.y.toFixed(2)} m\n`;
+    summary += `- Release Angle: ${actualAngle.toFixed(1)}°\n`;
+    summary += `- Release Position: (${t.releasePos.x.toFixed(2)}, ${t.releasePos.y.toFixed(2)}, ${t.releasePos.z.toFixed(2)})\n`;
+    summary += `- Release Velocity: (${t.releaseVel.x.toFixed(2)}, ${t.releaseVel.y.toFixed(2)}, ${t.releaseVel.z.toFixed(2)})\n`;
+    summary += `- InFlight Frames: ${ff.length}, Held Frames: ${hf.length}\n`;
+
+    if (ideal) {
+        const speedErr = ((t.releaseSpeed - ideal.idealSpeed) / ideal.idealSpeed * 100);
+        const angleErr = actualAngle - ideal.idealAngle;
+        summary += `\n### Ideal vs Actual Comparison\n`;
+        summary += `- Ideal Speed for Swish: ${ideal.idealSpeed.toFixed(2)} m/s\n`;
+        summary += `- Ideal Launch Angle: ${ideal.idealAngle.toFixed(1)}°\n`;
+        summary += `- Speed Error: ${speedErr > 0 ? '+' : ''}${speedErr.toFixed(1)}% (${Math.abs(speedErr) < 15 ? 'ACCEPTABLE' : 'NEEDS WORK'})\n`;
+        summary += `- Angle Error: ${angleErr > 0 ? '+' : ''}${angleErr.toFixed(1)}° (${Math.abs(angleErr) < 8 ? 'ACCEPTABLE' : 'NEEDS WORK'})\n`;
+        summary += `- Horizontal Distance to Hoop: ${ideal.horizontalDist.toFixed(2)} m\n`;
+        summary += `- Vertical Distance to Hoop: ${ideal.verticalDist.toFixed(2)} m\n`;
+    }
+
+    // Speed profile
+    if (ff.length > 2) {
+        const speeds = ff.map(f => Math.sqrt(f.Ball_Vel_X**2 + f.Ball_Vel_Y**2 + f.Ball_Vel_Z**2));
+        const maxSpeed = Math.max(...speeds);
+        const minSpeed = Math.min(...speeds);
+        const avgSpeed = speeds.reduce((a,b)=>a+b,0)/speeds.length;
+        summary += `\n### Ball Speed Profile\n`;
+        summary += `- Max Speed: ${maxSpeed.toFixed(2)} m/s\n`;
+        summary += `- Min Speed: ${minSpeed.toFixed(2)} m/s\n`;
+        summary += `- Avg Speed During Flight: ${avgSpeed.toFixed(2)} m/s\n`;
+    }
+
+    // Controller velocity profile
+    const ctrlSpeeds = t.frames.map(f => Math.sqrt(f.Controller_Vel_X**2 + f.Controller_Vel_Y**2 + f.Controller_Vel_Z**2));
+    if (ctrlSpeeds.length) {
+        const peakCtrl = Math.max(...ctrlSpeeds);
+        const releaseIdx = t.frames.findIndex(f => f.Phase === 'InFlight');
+        const ctrlAtRelease = releaseIdx >= 0 ? ctrlSpeeds[releaseIdx].toFixed(2) : 'N/A';
+        summary += `\n### Controller/Hand Motion\n`;
+        summary += `- Peak Controller Speed: ${peakCtrl.toFixed(2)} m/s\n`;
+        summary += `- Controller Speed at Release: ${ctrlAtRelease} m/s\n`;
+    }
+
+    // Eye tracking data
+    const ballPrefix = t.ball.replace(/_\d{4,}$/, '');
+    const ed = eyeData[ballPrefix];
+    if (ed && ed.rows.length) {
+        const rows = ed.rows;
+        const U = rows.map(r => r.NormalizedU ?? 0);
+        const V = rows.map(r => r.NormalizedV ?? 0);
+        const meanU = U.reduce((a,b)=>a+b,0)/U.length;
+        const meanV = V.reduce((a,b)=>a+b,0)/V.length;
+        const dist = Math.sqrt((meanU-EXPERT_U)**2 + (meanV-EXPERT_V)**2);
+        const focusAcc = Math.max(0, 1 - dist/0.5) * 100;
+        const stdU = Math.sqrt(U.reduce((a,u)=>a+(u-meanU)**2,0)/U.length);
+        const stdV = Math.sqrt(V.reduce((a,v)=>a+(v-meanV)**2,0)/V.length);
+        const stability = Math.sqrt(stdU**2 + stdV**2);
+        let inZone = 0;
+        U.forEach((u,i) => { if (Math.sqrt((u-EXPERT_U)**2+(V[i]-EXPERT_V)**2) <= EXPERT_R) inZone++; });
+        const zonePercent = (inZone / U.length * 100);
+        let maxRun = 0, curRun = 0;
+        const qeRadius = EXPERT_R * 1.5;
+        U.forEach((u,i) => {
+            if (Math.sqrt((u-meanU)**2+(V[i]-meanV)**2) <= qeRadius) { curRun++; if (curRun>maxRun) maxRun=curRun; }
+            else curRun=0;
+        });
+        const quietEyeSec = maxRun / 72;
+        const stabScore = Math.max(0, 1 - stability/0.15) * 100;
+        const qeScore = Math.min(quietEyeSec / 1.0, 1) * 100;
+        const focusScore = Math.round(focusAcc * 0.40 + stabScore * 0.25 + zonePercent * 0.25 + qeScore * 0.10);
+
+        summary += `\n### Eye Tracking / Gaze Analysis\n`;
+        summary += `- Overall Focus Score: ${focusScore}/100\n`;
+        summary += `- Focus Accuracy: ${focusAcc.toFixed(1)}% (distance from expert gaze center)\n`;
+        summary += `- Gaze Stability (σ): ${stability.toFixed(4)} (lower is better, <0.05 is excellent)\n`;
+        summary += `- Time in Expert Zone: ${zonePercent.toFixed(1)}%\n`;
+        summary += `- Quiet Eye Duration: ${quietEyeSec.toFixed(2)}s (>0.6s is expert-level)\n`;
+        summary += `- Gaze Centroid (U,V): (${meanU.toFixed(3)}, ${meanV.toFixed(3)})\n`;
+        summary += `- Expert Target (U,V): (${EXPERT_U}, ${EXPERT_V})\n`;
+        summary += `- Eye Tracking Samples: ${rows.length}\n`;
+    } else {
+        summary += `\n### Eye Tracking\n- No eye tracking data available for this throw.\n`;
+    }
+
+    return summary;
+}
+
+function buildSessionSummary() {
+    let summary = `## Session Overview\n`;
+    const goals = throws.filter(t => t.result === 'Goal').length;
+    summary += `- Total Throws: ${throws.length}\n`;
+    summary += `- Goals: ${goals} | Misses: ${throws.length - goals}\n`;
+    summary += `- Accuracy: ${(goals/throws.length*100).toFixed(0)}%\n`;
+    summary += `- Avg Release Speed: ${(throws.reduce((s,t)=>s+t.releaseSpeed,0)/throws.length).toFixed(2)} m/s\n\n`;
+
+    throws.forEach((t, i) => {
+        summary += buildThrowSummary(i) + '\n---\n';
+    });
+    return summary;
+}
+
+// ── System Prompt ────────────────────────────────────────────────────
+const COACH_SYSTEM_PROMPT = `You are Coach AI — an elite NBA-level basketball shooting coach with 30+ years of experience training professional players. You specialize in free-throw biomechanics, motor learning, and sports vision science.
+
+You are analyzing data from a VR basketball free-throw training system. The player is a novice learning to shoot free throws in virtual reality using a Meta Quest headset.
+
+YOUR COACHING STYLE:
+- Direct, constructive, and encouraging — like a great coach on the practice court
+- Use simple language a beginner can understand
+- Reference specific numbers from the data (angles, speeds, percentages)
+- Prioritize the 1-2 most impactful fixes first, don't overwhelm with too many corrections
+- Give concrete, actionable drills and mental cues
+- Compare their metrics to ideal/expert benchmarks when available
+
+KEY BASKETBALL KNOWLEDGE:
+- NBA free-throw line is 4.572m (15 ft) from the backboard
+- Hoop height is 3.048m (10 ft)
+- Optimal release angle is typically 48-52° for a high-arc swish
+- Optimal entry angle into the hoop is ~45-48° from horizontal
+- Release height should be above the forehead (~2.0-2.3m for average height)
+- Consistent release speed matters more than absolute speed
+- Ball speed typically 6-8 m/s for a proper free throw at regulation distance
+
+EYE TRACKING / QUIET EYE:
+- "Quiet Eye" is the final fixation on the target before and during the shooting motion
+- Expert shooters maintain quiet eye >0.6 seconds
+- Expert gaze should be focused on the back of the rim / just over the front rim
+- Gaze stability (σ < 0.05) indicates focused, steady visual attention
+- Focus score above 70 is good, above 85 is expert-level
+- Wandering gaze (high σ, low focus score) indicates lack of concentration or visual routine
+
+FORMAT YOUR RESPONSE:
+1. **Quick Verdict** — One-line summary (e.g., "Solid attempt — release angle needs work")
+2. **What You Did Well** — Positive reinforcement with specific data
+3. **Key Issues** — Top 1-2 problems, explained clearly with numbers
+4. **How to Fix It** — Specific drills, cues, or adjustments
+5. **Eye Focus Feedback** — If eye tracking data is available, comment on visual focus
+6. **Next Rep Focus** — One thing to focus on for the very next throw
+
+Keep it concise but informative. Use bullet points. Be the coach they need.`;
+
+const SESSION_SYSTEM_PROMPT = `You are Coach AI — an elite NBA-level basketball shooting coach analyzing an ENTIRE practice session from a VR free-throw training system. The player is a novice.
+
+You will receive data for multiple throws. Your job is to identify:
+1. **Session Overview** — Overall accuracy, consistency, trend (improving or declining?)
+2. **Patterns** — Common issues across throws (consistent speed errors, angle problems, etc.)
+3. **Best Throw** — Which throw was closest to ideal and why
+4. **Biggest Issue** — The #1 thing holding them back across the session
+5. **Progress Indicators** — Any signs of improvement throw-to-throw
+6. **Eye Tracking Trends** — If available, how gaze focus changed across throws
+7. **Practice Plan** — A specific 3-step practice plan for their next session
+
+Be encouraging but honest. Use specific numbers. Keep it actionable and motivating.`;
+
+// ── Simple Markdown → HTML renderer ──────────────────────────────────
+function renderMarkdown(text) {
+    return text
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/^### (.+)$/gm, '<h4 style="color:var(--expert);margin:14px 0 6px;">$1</h4>')
+        .replace(/^## (.+)$/gm, '<h4 style="color:var(--accent);margin:16px 0 8px;">$1</h4>')
+        .replace(/^# (.+)$/gm, '<h4 style="color:var(--accent);font-size:17px;margin:18px 0 8px;">$1</h4>')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/`(.+?)`/g, '<code>$1</code>')
+        .replace(/^- (.+)$/gm, '• $1')
+        .replace(/^(\d+)\. (.+)$/gm, '$1. $2')
+        .replace(/\n---\n/g, '<hr style="border-color:var(--border);margin:12px 0;">')
+        .replace(/\n/g, '<br>');
+}
+
+// ── Gemini API Call with Streaming ───────────────────────────────────
+let coachAbort = null;
+
+async function askCoach(mode) {
+    const apiKey = localStorage.getItem('gemini_api_key');
+    if (!apiKey) { alert('Please paste your Gemini API key and click Save.'); return; }
+    if (!throws.length) { alert('No throws loaded. Upload CSV files first.'); return; }
+
+    const model = document.getElementById('modelSelect').value || 'gemini-2.5-flash';
+    const responseEl = document.getElementById('coachResponse');
+    const btnSingle = document.getElementById('btnAskCoach');
+    const btnSession = document.getElementById('btnSessionSummary');
+
+    // Cancel any in-progress request
+    if (coachAbort) coachAbort.abort();
+    coachAbort = new AbortController();
+
+    // Disable buttons, show thinking
+    btnSingle.disabled = true;
+    btnSession.disabled = true;
+    responseEl.innerHTML = '<div class="coach-thinking">🧠 Coach is analyzing<div class="dots"><span></span><span></span><span></span></div></div>';
+
+    // Build prompt
+    const activeIdx = [...document.querySelectorAll('.chip')].findIndex(c => c.classList.contains('active'));
+    const idx = activeIdx >= 0 ? activeIdx : 0;
+    const systemPrompt = mode === 'session' ? SESSION_SYSTEM_PROMPT : COACH_SYSTEM_PROMPT;
+    const userContent = mode === 'session' ? buildSessionSummary() : buildThrowSummary(idx);
+
+    const body = {
+        system_instruction: { parts: [{ text: systemPrompt }] },
+        contents: [{ role: 'user', parts: [{ text: userContent }] }],
+        generationConfig: {
+            temperature: 0.7,
+            topP: 0.9,
+            maxOutputTokens: 2048
+        }
+    };
+
+    try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
+        const resp = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+            signal: coachAbort.signal
+        });
+
+        if (!resp.ok) {
+            const err = await resp.text();
+            throw new Error(`API Error ${resp.status}: ${err}`);
+        }
+
+        // Stream SSE response
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let fullText = '';
+        let buffer = '';
+        responseEl.innerHTML = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop(); // keep incomplete line in buffer
+
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                const jsonStr = line.slice(6).trim();
+                if (!jsonStr || jsonStr === '[DONE]') continue;
+
+                try {
+                    const chunk = JSON.parse(jsonStr);
+                    const text = chunk?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                    if (text) {
+                        fullText += text;
+                        responseEl.innerHTML = renderMarkdown(fullText);
+                        responseEl.scrollTop = responseEl.scrollHeight;
+                    }
+                } catch(e) { /* skip malformed chunks */ }
+            }
+        }
+
+        if (!fullText) {
+            responseEl.innerHTML = '<div class="coach-placeholder">Coach had no response. Try again.</div>';
+        }
+
+    } catch (err) {
+        if (err.name === 'AbortError') return;
+        responseEl.innerHTML = `<div style="color:var(--miss);">❌ ${err.message}</div>`;
+        console.error('Coach error:', err);
+    } finally {
+        btnSingle.disabled = false;
+        btnSession.disabled = false;
+        coachAbort = null;
+    }
+}
+</script>
+</body>
+</html>
