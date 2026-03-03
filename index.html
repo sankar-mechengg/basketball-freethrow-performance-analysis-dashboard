@@ -845,6 +845,57 @@ function renderMarkdown(text) {
 // ── Gemini API Call with Streaming ───────────────────────────────────
 let coachAbort = null;
 
+function processSSEBuffer(buffer, fullText, responseEl, statusInfo) {
+    // Split on newlines and process all complete lines
+    const lines = buffer.split('\n');
+    const remaining = lines.pop(); // keep incomplete line in buffer
+
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith('data:')) continue;
+        const jsonStr = trimmed.slice(5).trim();
+        if (!jsonStr || jsonStr === '[DONE]') continue;
+
+        try {
+            const chunk = JSON.parse(jsonStr);
+
+            // Check for finish reason on every chunk
+            const finishReason = chunk?.candidates?.[0]?.finishReason;
+            if (finishReason) statusInfo.finishReason = finishReason;
+
+            // Extract all text parts from the candidate (thinking models may have multiple parts)
+            const parts = chunk?.candidates?.[0]?.content?.parts || [];
+            for (const part of parts) {
+                // Skip thought/reasoning parts (thinking models send these with no text or a "thought" flag)
+                if (part.thought) {
+                    statusInfo.isThinking = true;
+                    continue;
+                }
+                if (part.text) {
+                    statusInfo.isThinking = false;
+                    fullText.value += part.text;
+                }
+            }
+
+            // Update display
+            if (fullText.value) {
+                let html = renderMarkdown(fullText.value);
+                if (statusInfo.isThinking) {
+                    html += '<br><span class="coach-thinking" style="margin-top:8px;">💭 Coach is reasoning deeper<span class="dots"><span></span><span></span><span></span></span></span>';
+                }
+                responseEl.innerHTML = html;
+                responseEl.scrollTop = responseEl.scrollHeight;
+            } else if (statusInfo.isThinking) {
+                responseEl.innerHTML = '<div class="coach-thinking">💭 Coach is thinking through the analysis<div class="dots"><span></span><span></span><span></span></div></div>';
+            }
+        } catch(e) {
+            console.warn('SSE chunk parse issue:', e.message, 'raw:', jsonStr?.substring(0, 100));
+        }
+    }
+
+    return remaining;
+}
+
 async function askCoach(mode) {
     const apiKey = localStorage.getItem('gemini_api_key');
     if (!apiKey) { alert('Please paste your Gemini API key and click Save.'); return; }
@@ -876,7 +927,7 @@ async function askCoach(mode) {
         generationConfig: {
             temperature: 0.7,
             topP: 0.9,
-            maxOutputTokens: 2048
+            maxOutputTokens: 65536
         }
     };
 
@@ -897,43 +948,42 @@ async function askCoach(mode) {
         // Stream SSE response
         const reader = resp.body.getReader();
         const decoder = new TextDecoder();
-        let fullText = '';
+        const fullText = { value: '' }; // wrapped in object for pass-by-reference
         let buffer = '';
+        const statusInfo = { finishReason: null, isThinking: false };
         responseEl.innerHTML = '';
 
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-
             buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop(); // keep incomplete line in buffer
-
-            for (const line of lines) {
-                if (!line.startsWith('data: ')) continue;
-                const jsonStr = line.slice(6).trim();
-                if (!jsonStr || jsonStr === '[DONE]') continue;
-
-                try {
-                    const chunk = JSON.parse(jsonStr);
-                    const text = chunk?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-                    if (text) {
-                        fullText += text;
-                        responseEl.innerHTML = renderMarkdown(fullText);
-                        responseEl.scrollTop = responseEl.scrollHeight;
-                    }
-                } catch(e) { /* skip malformed chunks */ }
-            }
+            buffer = processSSEBuffer(buffer, fullText, responseEl, statusInfo);
         }
 
-        if (!fullText) {
-            responseEl.innerHTML = '<div class="coach-placeholder">Coach had no response. Try again.</div>';
+        // Flush any remaining data in the buffer after stream ends
+        if (buffer.trim()) {
+            processSSEBuffer(buffer + '\n', fullText, responseEl, statusInfo);
+        }
+
+        // Final render — remove any lingering thinking indicator
+        if (fullText.value) {
+            let finalHtml = renderMarkdown(fullText.value);
+            // Append truncation warning if model hit token limit
+            if (statusInfo.finishReason === 'MAX_TOKENS') {
+                finalHtml += '<br><hr style="border-color:var(--border);margin:12px 0;"><div style="color:var(--accent);font-size:13px;">⚠️ Response was truncated by the model\'s token limit. Click the button again to get a fresh analysis, or switch to a model with a higher output limit.</div>';
+            }
+            responseEl.innerHTML = finalHtml;
+        } else {
+            responseEl.innerHTML = '<div class="coach-placeholder">Coach had no response. The model may still be processing — try again in a moment.</div>';
         }
 
     } catch (err) {
         if (err.name === 'AbortError') return;
-        responseEl.innerHTML = `<div style="color:var(--miss);">❌ ${err.message}</div>`;
         console.error('Coach error:', err);
+        // Show error but preserve any partial response
+        const partial = responseEl.querySelector('.coach-thinking') ? '' : responseEl.innerHTML;
+        responseEl.innerHTML = (partial ? partial + '<br><hr style="border-color:var(--border);margin:12px 0;">' : '') +
+            `<div style="color:var(--miss);font-size:13px;">❌ ${err.message}</div>`;
     } finally {
         btnSingle.disabled = false;
         btnSession.disabled = false;
